@@ -15,6 +15,10 @@ on:
         description: "SukiSU-Ultra ref"
         required: true
         default: "susfs_features"
+      susfs_branch:
+        description: "susfs4ksu branch"
+        required: true
+        default: "gki-android13-5.15"
 
 jobs:
   build:
@@ -24,6 +28,7 @@ jobs:
       DEVICE: ${{ github.event.inputs.device }}
       KERNEL_BRANCH: ${{ github.event.inputs.kernel_branch }}
       SUKISU_REF: ${{ github.event.inputs.sukisu_ref }}
+      SUSFS_BRANCH: ${{ github.event.inputs.susfs_branch }}
       KERNEL_DIR: kernel/xiaomi/sm8550
       KERNEL_DT_DIR: kernel/xiaomi/sm8550-devicetrees
       KERNEL_MODULE_DIR: kernel/xiaomi/sm8550-modules
@@ -78,10 +83,16 @@ jobs:
         git clone --depth=1 --branch "${KERNEL_BRANCH}" \
           https://github.com/LineageOS/android_kernel_xiaomi_sm8550-modules "${KERNEL_MODULE_DIR}"
 
-    - name: Integrate SukiSU-Ultra
+    - name: Integrate SukiSU-Ultra and susfs fs patch
       working-directory: ${{ env.KERNEL_DIR }}
       run: |
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "${SUKISU_REF}"
+        git clone --depth=1 --branch "${SUSFS_BRANCH}" \
+          https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
+        cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch .
+        cp ../susfs4ksu/kernel_patches/fs/* fs/
+        cp ../susfs4ksu/kernel_patches/include/linux/* include/linux/
+        patch -p1 < 50_add_susfs_in_gki-android13-5.15.patch
         rm -f android/abi_gki_protected_exports_aarch64 android/abi_gki_protected_exports_x86_64
 
     - name: Install clang toolchain
