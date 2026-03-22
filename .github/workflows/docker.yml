@@ -1,13 +1,12 @@
 name: Build Docker Core for Android
+
 on:
-  watch:
-    types: [started]
   workflow_dispatch:
-    inputs:  # 添加自定义输入参数
+    inputs:
       packages:
         description: '需要构建的软件包（用空格分隔，例如：aria2 samba）'
         required: true
-        default: 'docker runc containerd docker-compose resolv-conf lvm2'  # 默认构建的包
+        default: 'docker runc containerd docker-compose resolv-conf lvm2'
 
 jobs:
   build:
@@ -19,11 +18,8 @@ jobs:
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
       CI: "false"
+
     steps:
-    - name: Prepare Configuration
-      run: |
-        echo "ENABLE_NETHUNTER=$(cat $CONFIG_ENV | grep -w "ENABLE_NETHUNTER" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
-        
     - name: Set swap to 10G
       uses: pierotofy/set-swap-space@master
       with:
@@ -32,57 +28,61 @@ jobs:
     - name: Setup build packages
       run: |
         echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
-        echo "DEVICE=$(echo ${{ env.KERNEL_CONFIG }} | sed 's!vendor/!!;s/_defconfig//;s/_user//;s/-perf//')" >> $GITHUB_ENV
         sudo apt-get update
-        sudo apt update && sudo apt install tk-dev -y 
+        sudo apt-get install -y tk-dev unzip
+
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone https://github.com/tomxi1997/termux-packages termux-packages
+        git clone https://github.com/${{ github.repository }} termux-packages
         cd termux-packages
+
         sed -i 's/TERMUX_PKG_VERSION=1:/TERMUX_PKG_VERSION=/' ./root-packages/docker/build.sh
         sed -i 's/${TERMUX_PKG_VERSION:2}/${TERMUX_PKG_VERSION}/g' ./root-packages/docker/build.sh
-        patch -p1 < $GITHUB_WORKSPACE/kernel_workspace/termux-packages/test/docker.patch
-        rm $GITHUB_WORKSPACE/kernel_workspace/termux-packages/root-packages/containerd/too_long_path.patch
-        
-        # 使用自定义输入的包列表（替换原有的固定包）
+        patch -p1 < ./test/docker.patch
+        rm -f ./root-packages/containerd/too_long_path.patch
+
+        ./scripts/setup-android-sdk.sh
+
         echo "///////////////////////////////////////////"
-        echo "要构建的软件包有${{ github.event.inputs.packages }}"
+        echo "要构建的软件包有 ${{ github.event.inputs.packages }}"
         echo "///////////////////////////////////////////"
+
         ./scripts/run-docker.sh ./build-package.sh -i --format debian ${{ github.event.inputs.packages }}
+
         cd output
-        mkdir out
+        mkdir -p out
         cp *.deb ./out
         XZ_OPT="-9" tar -cJf out.tar.xz out
         cp out.tar.xz $GITHUB_WORKSPACE/kernel_workspace/
-        
+
     - name: How many packages
       run: |
         echo "///////////////////////////////////////////"
         ls $GITHUB_WORKSPACE/kernel_workspace/termux-packages/output
         echo "///////////////////////////////////////////"
-        
+
     - name: Make magisk module
       run: |
         echo "///////////////////////////////////////////"
         cp $GITHUB_WORKSPACE/kernel_workspace/termux-packages/output/*.deb $GITHUB_WORKSPACE/kernel_workspace/termux-packages/test/docker/tmp
         cd $GITHUB_WORKSPACE/kernel_workspace/termux-packages/test/docker/tmp
-        sudo chmod +x repack.sh
-        sudo ./repack.sh
+        chmod +x repack.sh
+        ./repack.sh
         cp $GITHUB_WORKSPACE/kernel_workspace/termux-packages/test/docker/tmp/A/data/docker.tar.xz $GITHUB_WORKSPACE/kernel_workspace/termux-packages/test/docker
         cp -R $GITHUB_WORKSPACE/kernel_workspace/termux-packages/test/docker/tmp/A/system $GITHUB_WORKSPACE/kernel_workspace/termux-packages/test/docker
-        sudo rm -rf $GITHUB_WORKSPACE/kernel_workspace/termux-packages/test/docker/tmp
+        rm -rf $GITHUB_WORKSPACE/kernel_workspace/termux-packages/test/docker/tmp
         echo "///////////////////////////////////////////"
-        
-    - name: Upload debian package 
+
+    - name: Upload debian package
       uses: actions/upload-artifact@v4
       with:
         name: package-android24-arm64
         path: kernel_workspace/out.tar.xz
-        retention-days: 3  #
-        
+        retention-days: 3
+
     - name: Upload magisk module
       uses: actions/upload-artifact@v4
       with:
         name: magisk-docker_android24-arm64
         path: kernel_workspace/termux-packages/test/docker/*
-        retention-days: 3  #
+        retention-days: 3
