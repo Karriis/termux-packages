@@ -95,6 +95,11 @@ jobs:
         patch -p1 < 50_add_susfs_in_gki-android13-5.15.patch
         rm -f android/abi_gki_protected_exports_aarch64 android/abi_gki_protected_exports_x86_64
 
+    - name: Normalize kernel release string
+      working-directory: ${{ env.KERNEL_DIR }}
+      run: |
+        sed -i "s/printf '%s' -dirty/printf '%s' ''/g" scripts/setlocalversion
+
     - name: Install clang toolchain
       run: |
         mkdir -p clang
