@@ -41,6 +41,20 @@ jobs:
       with:
         swap-size-gb: 12
 
+    - name: Show runner resources
+      run: |
+        echo "==== uname ===="
+        uname -a
+        echo "==== cpu ===="
+        nproc
+        lscpu || true
+        echo "==== memory ===="
+        free -h
+        echo "==== swap ===="
+        swapon --show || true
+        echo "==== disk ===="
+        df -h
+
     - name: Restore ccache
       uses: actions/cache@v4
       with:
