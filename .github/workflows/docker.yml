@@ -52,12 +52,11 @@ jobs:
         patch -p1 < ./test/docker.patch
         rm -f ./root-packages/containerd/too_long_path.patch
 
-        ./scripts/setup-android-sdk.sh
-
         echo "///////////////////////////////////////////"
         echo "要构建的软件包有 ${{ github.event.inputs.packages }}"
         echo "///////////////////////////////////////////"
 
+        ./scripts/run-docker.sh ./scripts/setup-android-sdk.sh
         ./scripts/run-docker.sh ./build-package.sh -i --format debian ${{ github.event.inputs.packages }}
 
         cd output
