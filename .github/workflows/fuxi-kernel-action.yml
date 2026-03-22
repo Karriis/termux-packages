@@ -11,6 +11,14 @@ on:
         description: "Device codename"
         required: true
         default: "fuxi"
+      sukisu_ref:
+        description: "SukiSU-Ultra ref"
+        required: true
+        default: "builtin"
+      susfs_branch:
+        description: "susfs4ksu branch"
+        required: true
+        default: "gki-android13-5.15"
 
 jobs:
   build:
@@ -19,6 +27,8 @@ jobs:
     env:
       DEVICE: ${{ github.event.inputs.device }}
       KERNEL_BRANCH: ${{ github.event.inputs.kernel_branch }}
+      SUKISU_REF: ${{ github.event.inputs.sukisu_ref }}
+      SUSFS_BRANCH: ${{ github.event.inputs.susfs_branch }}
       KERNEL_DIR: kernel/xiaomi/sm8550
       KERNEL_DT_DIR: kernel/xiaomi/sm8550-devicetrees
       KERNEL_MODULE_DIR: kernel/xiaomi/sm8550-modules
@@ -34,7 +44,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y \
           bc bison build-essential ccache curl flex git kmod libelf-dev \
-          libssl-dev lz4 pahole python3 rsync unzip zip
+          libssl-dev lz4 pahole patch python3 rsync unzip zip
 
     - name: Add swap
       uses: pierotofy/set-swap-space@master
@@ -73,6 +83,22 @@ jobs:
         git clone --depth=1 --branch "${KERNEL_BRANCH}" \
           https://github.com/LineageOS/android_kernel_xiaomi_sm8550-modules "${KERNEL_MODULE_DIR}"
 
+    - name: Integrate SukiSU-Ultra and susfs
+      working-directory: ${{ env.KERNEL_DIR }}
+      run: |
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "${SUKISU_REF}"
+        git clone --depth=1 --branch "${SUSFS_BRANCH}" \
+          https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
+        cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU/
+        cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch .
+        cp ../susfs4ksu/kernel_patches/fs/* fs/
+        cp ../susfs4ksu/kernel_patches/include/linux/* include/linux/
+        cd KernelSU
+        patch -p1 < 10_enable_susfs_for_ksu.patch
+        cd ..
+        patch -p1 < 50_add_susfs_in_gki-android13-5.15.patch
+        rm -f android/abi_gki_protected_exports_aarch64 android/abi_gki_protected_exports_x86_64
+
     - name: Install clang toolchain
       run: |
         mkdir -p clang
@@ -95,7 +121,7 @@ jobs:
           arch/arm64/configs/vendor/${DEVICE}_GKI.config \
           "${GITHUB_WORKSPACE}/fuxi-docker.fragment"
         make O="${GITHUB_WORKSPACE}/${OUT_DIR}" olddefconfig
-        grep -E 'CONFIG_(PID_NS|IPC_NS|USER_NS|CGROUP_PIDS|CGROUP_DEVICE|NETFILTER_XT_MATCH_ADDRTYPE|BRIDGE_NETFILTER)=' \
+        grep -E 'CONFIG_(KSU|KSU_SUSFS|PID_NS|IPC_NS|USER_NS|CGROUP_PIDS|CGROUP_DEVICE|NETFILTER_XT_MATCH_ADDRTYPE|BRIDGE_NETFILTER)=' \
           "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
 
     - name: Build kernel image
