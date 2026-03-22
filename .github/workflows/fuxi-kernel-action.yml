@@ -119,6 +119,15 @@ jobs:
         make O="${GITHUB_WORKSPACE}/${OUT_DIR}" olddefconfig
         grep -E 'CONFIG_(KSU|KSU_SUSFS|PID_NS|IPC_NS|USER_NS|CGROUP_PIDS|CGROUP_DEVICE|NETFILTER_XT_MATCH_ADDRTYPE|BRIDGE_NETFILTER)=' \
           "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_KSU=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_KSU_SUSFS=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_KSU_MANUAL_SU=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_PID_NS=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_USER_NS=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_CGROUP_PIDS=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_CGROUP_DEVICE=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_BRIDGE_NETFILTER=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
 
     - name: Build kernel image
       working-directory: ${{ env.KERNEL_DIR }}
