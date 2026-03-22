@@ -7,18 +7,30 @@ on:
         description: "Kernel source branch"
         required: true
         default: "lineage-23.2"
+      kernel_ref:
+        description: "Pinned sm8550 kernel commit in the 5.15.197 window"
+        required: true
+        default: "2cac706017fd8fd44a1d6a27855ef1b685ce4ea2"
       device:
         description: "Device codename"
         required: true
         default: "fuxi"
       sukisu_ref:
-        description: "SukiSU-Ultra ref"
+        description: "Pinned SukiSU-Ultra commit with API 4.1.0 and SUSFS support"
         required: true
-        default: "builtin"
+        default: "3309c4787b0f873fb51d35e6e151dd220577b441"
       susfs_branch:
         description: "susfs4ksu branch"
         required: true
         default: "gki-android13-5.15"
+      baseline_boot_url:
+        description: "Known-good XDA boot image used as config baseline"
+        required: true
+        default: "https://xdaforums.com/attachments/5_15_197_boot_sukisu410-susfs-img.6306840/"
+      clang_package:
+        description: "Android clang package matching the known-good baseline"
+        required: true
+        default: "clang-r450784e"
 
 jobs:
   build:
@@ -27,13 +39,15 @@ jobs:
     env:
       DEVICE: ${{ github.event.inputs.device }}
       KERNEL_BRANCH: ${{ github.event.inputs.kernel_branch }}
+      KERNEL_REF: ${{ github.event.inputs.kernel_ref }}
       SUKISU_REF: ${{ github.event.inputs.sukisu_ref }}
       SUSFS_BRANCH: ${{ github.event.inputs.susfs_branch }}
+      BASELINE_BOOT_URL: ${{ github.event.inputs.baseline_boot_url }}
+      CLANG_PACKAGE: ${{ github.event.inputs.clang_package }}
       KERNEL_DIR: kernel/xiaomi/sm8550
-      KERNEL_DT_DIR: kernel/xiaomi/sm8550-devicetrees
-      KERNEL_MODULE_DIR: kernel/xiaomi/sm8550-modules
       OUT_DIR: out
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      BASELINE_CONFIG_SHA256: "21e734a1b16dc214e257af2c8ca6f6f9bd49f9b67885ad7beedc583afe692f82"
 
     steps:
     - name: Checkout workflow repo
@@ -44,7 +58,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y \
           bc bison build-essential ccache curl flex git kmod libelf-dev \
-          libssl-dev lz4 pahole patch python3 rsync unzip zip
+          libssl-dev lz4 pahole patch python3 rsync unzip xz-utils zip
 
     - name: Add swap
       uses: pierotofy/set-swap-space@master
@@ -69,21 +83,46 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ${{ env.CCACHE_DIR }}
-        key: fuxi-kernel-ccache-${{ github.run_id }}
+        key: fuxi-kernel-197-ccache-${{ github.run_id }}
         restore-keys: |
-          fuxi-kernel-ccache-
+          fuxi-kernel-197-ccache-
 
-    - name: Sync kernel sources
+    - name: Sync pinned kernel source
       run: |
         mkdir -p kernel/xiaomi
-        git clone --depth=1 --branch "${KERNEL_BRANCH}" \
+        git clone --filter=blob:none --single-branch --branch "${KERNEL_BRANCH}" \
           https://github.com/LineageOS/android_kernel_xiaomi_sm8550 "${KERNEL_DIR}"
-        git clone --depth=1 --branch "${KERNEL_BRANCH}" \
-          https://github.com/LineageOS/android_kernel_xiaomi_sm8550-devicetrees "${KERNEL_DT_DIR}"
-        git clone --depth=1 --branch "${KERNEL_BRANCH}" \
-          https://github.com/LineageOS/android_kernel_xiaomi_sm8550-modules "${KERNEL_MODULE_DIR}"
+        git -C "${KERNEL_DIR}" fetch --depth=1 origin "${KERNEL_REF}"
+        git -C "${KERNEL_DIR}" checkout --detach FETCH_HEAD
+        git -C "${KERNEL_DIR}" show -s --date=iso --format='%H%n%ad%n%s'
+        git -C "${KERNEL_DIR}" show HEAD:Makefile | grep -E '^VERSION =|^PATCHLEVEL =|^SUBLEVEL =|^EXTRAVERSION ='
 
-    - name: Integrate SukiSU-Ultra and susfs fs patch
+    - name: Download XDA baseline boot and extract config
+      run: |
+        curl -L "${BASELINE_BOOT_URL}" -o baseline-boot.img
+        python3 - <<'PY'
+        import gzip
+        import hashlib
+        import os
+        from pathlib import Path
+
+        boot = Path("baseline-boot.img").read_bytes()
+        st = boot.find(b"IKCFG_ST")
+        ed = boot.find(b"IKCFG_ED")
+        if st == -1 or ed == -1 or ed <= st + 8:
+            raise SystemExit("Failed to locate IKCONFIG in XDA baseline boot image")
+
+        config = gzip.decompress(boot[st + 8:ed])
+        sha256 = hashlib.sha256(config).hexdigest()
+        Path("baseline-kernel.config").write_bytes(config)
+        print(f"baseline config sha256: {sha256}")
+
+        expected = os.environ["BASELINE_CONFIG_SHA256"]
+        if sha256 != expected:
+            raise SystemExit(f"Unexpected baseline config hash: {sha256}")
+        PY
+
+    - name: Integrate pinned SukiSU-Ultra and susfs fs patch
       working-directory: ${{ env.KERNEL_DIR }}
       run: |
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "${SUKISU_REF}"
@@ -95,18 +134,14 @@ jobs:
         patch -p1 < 50_add_susfs_in_gki-android13-5.15.patch
         rm -f android/abi_gki_protected_exports_aarch64 android/abi_gki_protected_exports_x86_64
 
-    - name: Normalize kernel release string
-      working-directory: ${{ env.KERNEL_DIR }}
-      run: |
-        sed -i "s/printf '%s' -dirty/printf '%s' ''/g" scripts/setlocalversion
-
     - name: Install clang toolchain
       run: |
         mkdir -p clang
         cd clang
-        curl -L https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r547379.tar.gz | tar xz
+        curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/${CLANG_PACKAGE}.tar.gz" | tar xz
+        ./bin/clang --version | head -n 1
 
-    - name: Generate merged config
+    - name: Generate config from known-good baseline
       working-directory: ${{ env.KERNEL_DIR }}
       run: |
         export ARCH=arm64
@@ -115,24 +150,27 @@ jobs:
         export LLVM_IAS=1
         export PATH="${GITHUB_WORKSPACE}/clang/bin:${PATH}"
         mkdir -p "${GITHUB_WORKSPACE}/${OUT_DIR}"
-        make O="${GITHUB_WORKSPACE}/${OUT_DIR}" gki_defconfig
+        cp "${GITHUB_WORKSPACE}/baseline-kernel.config" "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
         ./scripts/kconfig/merge_config.sh -m -O "${GITHUB_WORKSPACE}/${OUT_DIR}" \
           "${GITHUB_WORKSPACE}/${OUT_DIR}/.config" \
-          arch/arm64/configs/vendor/kalama_GKI.config \
-          arch/arm64/configs/vendor/${DEVICE}_GKI.config \
           "${GITHUB_WORKSPACE}/fuxi-docker.fragment"
         make O="${GITHUB_WORKSPACE}/${OUT_DIR}" olddefconfig
-        grep -E 'CONFIG_(KSU|KSU_SUSFS|PID_NS|IPC_NS|USER_NS|CGROUP_PIDS|CGROUP_DEVICE|NETFILTER_XT_MATCH_ADDRTYPE|BRIDGE_NETFILTER)=' \
+        grep -E 'CONFIG_(KSU|KSU_SUSFS|KSU_MANUAL_SU|PID_NS|IPC_NS|USER_NS|CGROUP_PIDS|CGROUP_DEVICE|NETFILTER_XT_MATCH_ADDRTYPE|BRIDGE_NETFILTER|SYSVIPC|POSIX_MQUEUE)=' \
           "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
         grep -q '^CONFIG_KSU=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
         grep -q '^CONFIG_KSU_SUSFS=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
         grep -q '^CONFIG_KSU_MANUAL_SU=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
         grep -q '^CONFIG_PID_NS=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_IPC_NS=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
         grep -q '^CONFIG_USER_NS=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
         grep -q '^CONFIG_CGROUP_PIDS=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
         grep -q '^CONFIG_CGROUP_DEVICE=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_SYSVIPC=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_POSIX_MQUEUE=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
         grep -q '^CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
         grep -q '^CONFIG_BRIDGE_NETFILTER=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        grep -q '^CONFIG_LOCALVERSION=\"-LK\"' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
+        ! grep -q '^CONFIG_LOCALVERSION_AUTO=y' "${GITHUB_WORKSPACE}/${OUT_DIR}/.config"
 
     - name: Build kernel image
       working-directory: ${{ env.KERNEL_DIR }}
@@ -152,9 +190,15 @@ jobs:
         export OBJDUMP=llvm-objdump
         make -j4 O="${GITHUB_WORKSPACE}/${OUT_DIR}" Image modules
 
+    - name: Verify built kernel release string
+      run: |
+        strings "${OUT_DIR}/arch/arm64/boot/Image" | grep -a "Linux version" | head -n 1
+        strings "${OUT_DIR}/arch/arm64/boot/Image" | grep -a -q "Linux version 5.15.197-LK+"
+
     - name: Collect artifacts
       run: |
         mkdir -p artifacts
+        cp baseline-kernel.config artifacts/baseline-kernel.config
         cp "${OUT_DIR}/arch/arm64/boot/Image" artifacts/Image
         cp "${OUT_DIR}/.config" artifacts/kernel.config
         find "${OUT_DIR}" -name '*.ko' -exec cp --parents {} artifacts/ \;
@@ -162,5 +206,5 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: fuxi-docker-kernel
+        name: fuxi-docker-kernel-197
         path: artifacts
