@@ -14,7 +14,7 @@ on:
       sukisu_ref:
         description: "SukiSU-Ultra ref"
         required: true
-        default: "susfs_features"
+        default: "builtin"
       susfs_branch:
         description: "susfs4ksu branch"
         required: true
