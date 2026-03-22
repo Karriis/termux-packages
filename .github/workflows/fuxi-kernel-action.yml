@@ -36,6 +36,11 @@ jobs:
           bc bison build-essential ccache curl flex git kmod libelf-dev \
           libssl-dev lz4 pahole python3 rsync unzip zip
 
+    - name: Add swap
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 12
+
     - name: Restore ccache
       uses: actions/cache@v4
       with:
@@ -95,7 +100,7 @@ jobs:
         export STRIP=llvm-strip
         export OBJCOPY=llvm-objcopy
         export OBJDUMP=llvm-objdump
-        make -j"$(nproc)" O="${GITHUB_WORKSPACE}/${OUT_DIR}" Image modules
+        make -j4 O="${GITHUB_WORKSPACE}/${OUT_DIR}" Image modules
 
     - name: Collect artifacts
       run: |
