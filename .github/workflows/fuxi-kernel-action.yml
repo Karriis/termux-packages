@@ -27,10 +27,10 @@ on:
         description: "Known-good XDA boot image used as config baseline"
         required: true
         default: "https://xdaforums.com/attachments/5_15_197_boot_sukisu410-susfs-img.6306840/"
-      clang_package:
-        description: "Android clang package matching the known-good baseline"
+      clang_archive_url:
+        description: "Direct Google prebuilts archive URL for the evidenced clang 14.0.7 toolchain"
         required: true
-        default: "clang-r450784e"
+        default: "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/5538393cf30cb39da6d53730a9b85f36958230da/clang-r450784e.tar.gz"
 
 jobs:
   build:
@@ -43,7 +43,7 @@ jobs:
       SUKISU_REF: ${{ github.event.inputs.sukisu_ref }}
       SUSFS_BRANCH: ${{ github.event.inputs.susfs_branch }}
       BASELINE_BOOT_URL: ${{ github.event.inputs.baseline_boot_url }}
-      CLANG_PACKAGE: ${{ github.event.inputs.clang_package }}
+      CLANG_ARCHIVE_URL: ${{ github.event.inputs.clang_archive_url }}
       KERNEL_DIR: kernel/xiaomi/sm8550
       OUT_DIR: out
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -134,12 +134,13 @@ jobs:
         patch -p1 < 50_add_susfs_in_gki-android13-5.15.patch
         rm -f android/abi_gki_protected_exports_aarch64 android/abi_gki_protected_exports_x86_64
 
-    - name: Install clang toolchain
+    - name: Install evidenced clang toolchain
       run: |
         mkdir -p clang
         cd clang
-        curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/${CLANG_PACKAGE}.tar.gz" | tar xz
+        curl -L "${CLANG_ARCHIVE_URL}" | tar xz
         ./bin/clang --version | head -n 1
+        ./bin/clang --version | grep -F "Android (8508608, based on r450784e) clang version 14.0.7"
 
     - name: Generate config from known-good baseline
       working-directory: ${{ env.KERNEL_DIR }}
