@@ -1,0 +1,148 @@
+name: Build Fuxi Kernel Fragment Bisect
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_ref:
+        description: "Official LOS 23.2 kernel commit from the running 20260316 boot"
+        required: true
+        default: "f508f9efd558751844624c934327f439f4e562cb"
+      device:
+        description: "Device codename"
+        required: true
+        default: "fuxi"
+      clang_archive_url:
+        description: "Pinned public clang-r563880c archive matching the running official boot string"
+        required: true
+        default: "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/edcb2a6ac86b51212d8acc6b72947e5f8cd23d35/clang-r563880c.tar.gz"
+      fragment_group:
+        description: "One fragment group to merge on top of the official baseline"
+        required: true
+        default: "sysvipc"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    env:
+      DEVICE: ${{ github.event.inputs.device }}
+      KERNEL_REF: ${{ github.event.inputs.kernel_ref }}
+      CLANG_ARCHIVE_URL: ${{ github.event.inputs.clang_archive_url }}
+      FRAGMENT_GROUP: ${{ github.event.inputs.fragment_group }}
+      KERNEL_DIR: kernel/xiaomi/sm8550
+      OUT_DIR: out-fragment
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      EXPECTED_RELEASE_STRING: "Linux version 5.15.200-gf508f9efd558"
+      EXPECTED_CLANG_STRING: "Android (14054515, +pgo, +bolt, +lto, +mlgo, based on r563880c) clang version 21.0.0"
+
+    steps:
+    - name: Checkout workflow repo
+      uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          bc bison build-essential ccache curl flex git kmod libelf-dev \
+          libssl-dev lz4 pahole patch python3 rsync unzip xz-utils zip
+
+    - name: Add swap
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 12
+
+    - name: Restore ccache
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: fuxi-los23.2-fragment-${{ env.FRAGMENT_GROUP }}-ccache-${{ github.run_id }}
+        restore-keys: |
+          fuxi-los23.2-fragment-${{ env.FRAGMENT_GROUP }}-ccache-
+          fuxi-los23.2-baseline-ccache-
+
+    - name: Validate fragment group
+      run: |
+        test -f "${GITHUB_WORKSPACE}/fuxi-fragments/${FRAGMENT_GROUP}.fragment"
+        cat "${GITHUB_WORKSPACE}/fuxi-fragments/${FRAGMENT_GROUP}.fragment"
+
+    - name: Sync official LOS 23.2 kernel source
+      run: |
+        mkdir -p kernel/xiaomi
+        git clone --filter=blob:none --single-branch --branch lineage-23.2 \
+          https://github.com/LineageOS/android_kernel_xiaomi_sm8550.git "${KERNEL_DIR}"
+        git -C "${KERNEL_DIR}" fetch --depth=1 origin "${KERNEL_REF}"
+        git -C "${KERNEL_DIR}" checkout --detach FETCH_HEAD
+
+    - name: Install evidenced clang-r563880c toolchain
+      run: |
+        mkdir -p clang
+        cd clang
+        curl -L "${CLANG_ARCHIVE_URL}" | tar xz
+        test -f AndroidVersion.txt
+        grep -Fx '21.0.0' AndroidVersion.txt
+        grep -Fx 'based on r563880c' AndroidVersion.txt
+        ./bin/clang --version | grep -F 'clang version 21.0.0'
+
+    - name: Generate baseline and merge selected fragment
+      working-directory: ${{ env.KERNEL_DIR }}
+      run: |
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export LLVM=1
+        export LLVM_IAS=1
+        export PATH="${GITHUB_WORKSPACE}/clang/bin:${PATH}"
+        mkdir -p "${GITHUB_WORKSPACE}/${OUT_DIR}"
+        ./scripts/kconfig/merge_config.sh -m -O "${GITHUB_WORKSPACE}/${OUT_DIR}" \
+          arch/arm64/configs/gki_defconfig \
+          arch/arm64/configs/vendor/kalama_GKI.config \
+          arch/arm64/configs/vendor/${DEVICE}_GKI.config \
+          "${GITHUB_WORKSPACE}/fuxi-fragments/${FRAGMENT_GROUP}.fragment"
+        make O="${GITHUB_WORKSPACE}/${OUT_DIR}" olddefconfig
+
+    - name: Build fragment kernel
+      working-directory: ${{ env.KERNEL_DIR }}
+      run: |
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export LLVM=1
+        export LLVM_IAS=1
+        export PATH="${GITHUB_WORKSPACE}/clang/bin:${PATH}"
+        export CC="ccache clang"
+        export CXX="ccache clang++"
+        export LD=ld.lld
+        export AR=llvm-ar
+        export NM=llvm-nm
+        export STRIP=llvm-strip
+        export OBJCOPY=llvm-objcopy
+        export OBJDUMP=llvm-objdump
+        export KBUILD_BUILD_USER="root"
+        export KBUILD_BUILD_HOST="${FRAGMENT_GROUP}-bisect"
+        export KBUILD_BUILD_TIMESTAMP="Mon Mar 16 06:31:24 UTC 2026"
+        make -j4 O="${GITHUB_WORKSPACE}/${OUT_DIR}" Image modules
+
+    - name: Verify built kernel release string
+      run: |
+        strings "${OUT_DIR}/arch/arm64/boot/Image" | grep -a -q "${EXPECTED_RELEASE_STRING}"
+        strings "${OUT_DIR}/arch/arm64/boot/Image" | grep -a -q "${EXPECTED_CLANG_STRING}"
+
+    - name: Collect artifacts
+      run: |
+        mkdir -p artifacts
+        {
+          echo "kernel_ref=${KERNEL_REF}"
+          echo "device=${DEVICE}"
+          echo "clang_archive_url=${CLANG_ARCHIVE_URL}"
+          echo "fragment_group=${FRAGMENT_GROUP}"
+          echo "expected_release_string=${EXPECTED_RELEASE_STRING}"
+          echo "expected_clang_string=${EXPECTED_CLANG_STRING}"
+        } > artifacts/evidence.txt
+        cp "${OUT_DIR}/arch/arm64/boot/Image" artifacts/Image
+        cp "${OUT_DIR}/.config" artifacts/kernel.config
+        cp "${OUT_DIR}/Module.symvers" artifacts/Module.symvers
+        find "${OUT_DIR}" -name '*.ko' -exec cp --parents {} artifacts/ \;
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuxi-fragment-bisect-${{ env.FRAGMENT_GROUP }}
+        path: artifacts
