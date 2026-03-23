@@ -15,6 +15,18 @@ on:
         description: "Pinned public clang-r563880c archive matching the running official boot string"
         required: true
         default: "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/edcb2a6ac86b51212d8acc6b72947e5f8cd23d35/clang-r563880c.tar.gz"
+      build_user:
+        description: "Kernel build user string for linux_banner"
+        required: true
+        default: "root"
+      build_host:
+        description: "Kernel build host string for linux_banner"
+        required: true
+        default: "c934a1efac0e"
+      build_timestamp:
+        description: "Kernel build timestamp string for linux_banner"
+        required: true
+        default: "Mon Mar 16 06:31:24 UTC 2026"
 
 jobs:
   build:
@@ -24,13 +36,15 @@ jobs:
       DEVICE: ${{ github.event.inputs.device }}
       KERNEL_REF: ${{ github.event.inputs.kernel_ref }}
       CLANG_ARCHIVE_URL: ${{ github.event.inputs.clang_archive_url }}
+      BUILD_USER: ${{ github.event.inputs.build_user }}
+      BUILD_HOST: ${{ github.event.inputs.build_host }}
+      BUILD_TIMESTAMP: ${{ github.event.inputs.build_timestamp }}
       KERNEL_DIR: kernel/xiaomi/sm8550
       OUT_BASELINE_DIR: out-baseline
       OUT_DIR: out
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      EXPECTED_KERNEL_VERSION: "Linux version 5.15.200-gf508f9efd558 (root@c934a1efac0e)"
+      EXPECTED_RELEASE_STRING: "Linux version 5.15.200-gf508f9efd558"
       EXPECTED_CLANG_STRING: "Android (14054515, +pgo, +bolt, +lto, +mlgo, based on r563880c) clang version 21.0.0"
-      OFFICIAL_BUILD_TIMESTAMP: "Mon Mar 16 06:31:24 UTC 2026"
 
     steps:
     - name: Checkout workflow repo
@@ -176,16 +190,18 @@ jobs:
         export STRIP=llvm-strip
         export OBJCOPY=llvm-objcopy
         export OBJDUMP=llvm-objdump
-        export KBUILD_BUILD_USER=root
-        export KBUILD_BUILD_HOST=c934a1efac0e
-        export KBUILD_BUILD_TIMESTAMP="${OFFICIAL_BUILD_TIMESTAMP}"
+        export KBUILD_BUILD_USER="${BUILD_USER}"
+        export KBUILD_BUILD_HOST="${BUILD_HOST}"
+        export KBUILD_BUILD_TIMESTAMP="${BUILD_TIMESTAMP}"
         make -j4 O="${GITHUB_WORKSPACE}/${OUT_DIR}" Image modules
 
     - name: Verify built kernel release string
       run: |
         strings "${OUT_DIR}/arch/arm64/boot/Image" | grep -a "Linux version" | head -n 1
-        strings "${OUT_DIR}/arch/arm64/boot/Image" | grep -a -q "${EXPECTED_KERNEL_VERSION}"
+        strings "${OUT_DIR}/arch/arm64/boot/Image" | grep -a -q "${EXPECTED_RELEASE_STRING}"
+        strings "${OUT_DIR}/arch/arm64/boot/Image" | grep -a -q "(${BUILD_USER}@${BUILD_HOST})"
         strings "${OUT_DIR}/arch/arm64/boot/Image" | grep -a -q "${EXPECTED_CLANG_STRING}"
+        strings "${OUT_DIR}/arch/arm64/boot/Image" | grep -a -q "${BUILD_TIMESTAMP}"
 
     - name: Collect artifacts
       run: |
@@ -194,9 +210,11 @@ jobs:
           echo "kernel_ref=${KERNEL_REF}"
           echo "device=${DEVICE}"
           echo "clang_archive_url=${CLANG_ARCHIVE_URL}"
-          echo "expected_kernel_version=${EXPECTED_KERNEL_VERSION}"
+          echo "build_user=${BUILD_USER}"
+          echo "build_host=${BUILD_HOST}"
+          echo "build_timestamp=${BUILD_TIMESTAMP}"
+          echo "expected_release_string=${EXPECTED_RELEASE_STRING}"
           echo "expected_clang_string=${EXPECTED_CLANG_STRING}"
-          echo "official_build_timestamp=${OFFICIAL_BUILD_TIMESTAMP}"
         } > artifacts/evidence.txt
         cp "${OUT_BASELINE_DIR}/.config" artifacts/official-baseline.config
         cp "${OUT_DIR}/arch/arm64/boot/Image" artifacts/Image
