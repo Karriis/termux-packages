@@ -22,11 +22,11 @@ on:
       build_host:
         description: "Kernel build host string for linux_banner"
         required: true
-        default: "c934a1efac0e"
+        default: "probe-fuxi"
       build_timestamp:
         description: "Kernel build timestamp string for linux_banner"
         required: true
-        default: "Mon Mar 16 06:31:24 UTC 2026"
+        default: "Sun Mar 23 13:50:00 UTC 2026"
 
 jobs:
   build:
